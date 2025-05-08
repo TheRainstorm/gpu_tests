@@ -12,13 +12,13 @@ int cublas_gemm_ex(cublasHandle_t handle, cublasOperation_t transA, cublasOperat
                    int m, int n, int k, T *A, T *B, S *C, int lda, int ldb, int ldc,
                    S *alpha, S *beta, int algo) {
     cudaDataType_t AType, BType, CType, ComputeType;
-    if (std::is_same<T, float>::value) {
+    if constexpr (std::is_same<T, float>::value) {
         AType = BType = CType = ComputeType = CUDA_R_32F;
-    } else if (std::is_same<T, double>::value) {
+    } else if constexpr (std::is_same<T, double>::value) {
         AType = BType = CType = ComputeType = CUDA_R_64F;
-    } else if (std::is_same<T, __half>::value) {
+    } else if constexpr (std::is_same<T, __half>::value) {
         AType = BType = CType = ComputeType = CUDA_R_16F;
-    } else if (std::is_same<T, int8_t>::value) {
+    } else if constexpr (std::is_same<T, int8_t>::value) {
         AType = BType = CUDA_R_8I;
         CType = ComputeType = CUDA_R_32I;
     } else {
@@ -55,12 +55,12 @@ int cublas_gemm_ex(cublasHandle_t handle, cublasOperation_t transA, cublasOperat
 template<typename T>
 void init_array(T* A, int M, int K) {
     for (int i = 0; i < M*K; ++i){
-        if (std::is_same<T, int8_t>::value) {
+        if constexpr (std::is_same<T, int8_t>::value) {
             A[i] = static_cast<int8_t>(rand() % 256);
-        } else if (std::is_same<T, __half>::value) {
+        } else if constexpr (std::is_same<T, __half>::value) {
             A[i] = __float2half(static_cast<float>(rand()) / RAND_MAX);
         } else {
-            A[i] = static_cast<T>(rand()) / static_cast<T>(RAND_MAX);
+            A[i] = static_cast<T>(rand()) / RAND_MAX;
         }
     }
 }
