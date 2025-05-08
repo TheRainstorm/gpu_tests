@@ -127,7 +127,7 @@ float bench_gemm(cublasHandle_t handle, int m, int n, int k, int warmup_times, i
     return avg_time;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
     if (deviceCount == 0) {
@@ -135,12 +135,30 @@ int main() {
         return 1;
     }
 
-    int device = 0; // 使用第一个设备
-    cudaSetDevice(device);
-
     cudaDeviceProp deviceProp;
+    for(int i = 0; i < deviceCount; ++i) {
+        cudaGetDeviceProperties(&deviceProp, i);
+        printf("Device %d: %s (SM %d.%d)\n", i, deviceProp.name, deviceProp.major, deviceProp.minor);
+    }
+
+    int device = 0; // 使用第一个设备
+    bool use_TC = false; // 默认不使用 Tensor Core
+    // 解析命令行参数
+    switch (argc) {
+        case 3:
+            use_TC = atoi(argv[2]);
+        case 2:
+            device = atoi(argv[1]);
+        case 1:
+            break;
+        default:
+            printf("Usage: %s <device_id> <use_TC>\n", argv[0]);
+            return 1;
+    }
+
+    printf("Select device: %d, use tensor core: %d\n", device, use_TC);
+    cudaSetDevice(device);
     cudaGetDeviceProperties(&deviceProp, device);
-    printf("Using Device %d: %s (SM %d.%d)\n", device, deviceProp.name, deviceProp.major, deviceProp.minor);
 
     // 初始化cuBLAS
     cublasHandle_t handle;
@@ -159,10 +177,13 @@ int main() {
     
     // 可以选择性地设置 Tensor Core 数学模式以利用 FP16 Tensor Cores (需要 SM 7.0+)
     if (deviceProp.major >= 7) {
-        printf("Note: Tensor Core math mode enabled.\n");
-        cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
-        // printf("Note: Tensor Core is supported, but not enabled for test\n");
-        // cublasSetMathMode(handle, CUBLAS_DEFAULT_MATH);
+        if (use_TC) {
+            cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
+            printf("Note: Tensor Core math mode enabled.\n");
+        } else {
+            cublasSetMathMode(handle, CUBLAS_DEFAULT_MATH);
+            printf("Note: Tensor Core is supported, but not enabled for test.\n");
+        }
     } else {
          cublasSetMathMode(handle, CUBLAS_DEFAULT_MATH);
          printf("Note: Device supports FP16 but not Tensor Cores for GEMM. Using default math mode.\n");
