@@ -139,6 +139,8 @@ int main(int argc, char *argv[]) {
     for(int i = 0; i < deviceCount; ++i) {
         cudaGetDeviceProperties(&deviceProp, i);
         printf("Device %d: %s (SM %d.%d)\n", i, deviceProp.name, deviceProp.major, deviceProp.minor);
+        printf(" FP32: %.2f TFLOPS\n", // Peak Performance (assume 64 FP32/sm):
+           (deviceProp.multiProcessorCount * 64) * (deviceProp.clockRate * 1e3) * 2 / 1e12);
     }
 
     int device = 0; // 使用第一个设备
