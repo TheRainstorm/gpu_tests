@@ -142,14 +142,19 @@ int main(int argc, char *argv[]) {
         printf(" FP32: %.2f TFLOPS\n", // Peak Performance (assume 64 FP32/sm):
            (deviceProp.multiProcessorCount * 64) * (deviceProp.clockRate * 1e3) * 2 / 1e12);
     }
+    printf("Note: Peak Performance assume 64 FP32/sm.\n");
 
     int device = 0; // 使用第一个设备
     bool use_TC = false; // 默认不使用 Tensor Core
     int run_mask = 0xf; // 默认运行所有测试
+    bool search_algo = false; // 默认不搜索算法
     // 解析命令行参数
     switch (argc) {
+        case 5:
+            search_algo = atoi(argv[4]);
         case 4:
             run_mask = atoi(argv[3]);
+            run_mask = (run_mask < 0) ? 0xf : run_mask;
         case 3:
             use_TC = atoi(argv[2]);
         case 2:
@@ -157,7 +162,11 @@ int main(int argc, char *argv[]) {
         case 1:
             break;
         default:
-            printf("Usage: %s <device_id> <use_TC> <run_mask>\n", argv[0]);
+            printf("Usage: %s <device_id> <use_TC> <run_mask> <search_algo>\n", argv[0]);
+            printf("  device_id: CUDA device ID (default: 0)\n");
+            printf("  use_TC: Use Tensor Core (1: yes, 0: no, default: 0)\n");
+            printf("  run_mask: Run mask (1: float, 2: double, 4: half, 8: int8, -1: run all)\n");
+            printf("  search_algo: Search for best algorithm (1: yes, 0: no, default: 0)\n");
             return 1;
     }
 
@@ -233,18 +242,18 @@ int main(int argc, char *argv[]) {
 
     // 测试 __half (FP16)
     if(run_mask & 0x4){
-        const std::vector<std::tuple<int, int, int>> test_cases = {
-            {128, 1024, 4096},
-            {1024, 1024, 1024},
-        };
         // 检查设备是否支持 FP16 计算（通常需要 SM 5.3+ for storage, 6.0+ for operations, 7.0+ for Tensor Cores）
         if (deviceProp.major > 5 || (deviceProp.major == 5 && deviceProp.minor >= 3)) {
             printf("\n--- Testing __half (FP16) ---\n");
             for (const auto& [M, N, K] : test_cases){
-                for (int algo = start_algo; algo <= end_algo; ++algo)
+                if (search_algo) {
+                    for (int algo = start_algo; algo <= end_algo; ++algo)
+                        bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times, algo);
+                    for (int algo = start_algo_t_op; algo <= end_algo_t_op; ++algo)
+                        bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times, algo);
+                }else{
                     bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times, algo);
-                for (int algo = start_algo_t_op; algo <= end_algo_t_op; ++algo)
-                    bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times, algo);
+                }
             }
         } else {
             printf("\n--- Skipping __half (FP16) benchmark: Device does not support FP16 compute ---\n");
@@ -256,17 +265,17 @@ int main(int argc, char *argv[]) {
 
     // 测试 int8_t
     if(run_mask & 0x8){
-        const std::vector<std::tuple<int, int, int>> test_cases = {
-            {128, 1024, 4096},
-            {1024, 1024, 1024},
-        };
         if (deviceProp.major >= 6) { // SM 6.0+ for INT8
             printf("\n--- Testing int8_t (INT8) ---\n");
             for (const auto& [M, N, K] : test_cases){
-                for (int algo = start_algo; algo <= end_algo; ++algo)
+                if (search_algo) {
+                    for (int algo = start_algo; algo <= end_algo; ++algo)
+                        bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times, algo);
+                    for (int algo = start_algo_t_op; algo <= end_algo_t_op; ++algo)
+                        bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times, algo);
+                }else{
                     bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times, algo);
-                for (int algo = start_algo_t_op; algo <= end_algo_t_op; ++algo)
-                    bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times, algo);
+                }
             }
         } else {
              printf("\n--- Skipping int8_t (INT8) benchmark: Device does not support INT8 compute ---\n");
