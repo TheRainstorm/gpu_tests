@@ -114,8 +114,8 @@ float bench_gemm(cublasHandle_t handle, int m, int n, int k, int warmup_times, i
     // 计算性能
     float avg_time = total_time / test_times;
     float tflops = 2.0 * m * n * k / (avg_time * 1e-3) / 1e12;
-    printf("M=%5d, N=%5d, K=%5d | Time: %6.3fms | TFLOPS: %6.2f\n",
-           m, n, k, avg_time, tflops);
+    printf("algo: %3d: M=%5d, N=%5d, K=%5d | Time: %6.3fms | TFLOPS: %6.2f\n",
+            algo, m, n, k, avg_time, tflops);
 
     // 释放内存
     cudaFree(A);
@@ -143,8 +143,11 @@ int main(int argc, char *argv[]) {
 
     int device = 0; // 使用第一个设备
     bool use_TC = false; // 默认不使用 Tensor Core
+    int run_mask = 0xf; // 默认运行所有测试
     // 解析命令行参数
     switch (argc) {
+        case 4:
+            run_mask = atoi(argv[3]);
         case 3:
             use_TC = atoi(argv[2]);
         case 2:
@@ -152,7 +155,7 @@ int main(int argc, char *argv[]) {
         case 1:
             break;
         default:
-            printf("Usage: %s <device_id> <use_TC>\n", argv[0]);
+            printf("Usage: %s <device_id> <use_TC> <run_mask>\n", argv[0]);
             return 1;
     }
 
@@ -160,20 +163,26 @@ int main(int argc, char *argv[]) {
     cudaSetDevice(device);
     cudaGetDeviceProperties(&deviceProp, device);
 
-    // 初始化cuBLAS
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-
-    // 测试参数列表 (M, N, K)
+    const int warmup_times = 5;
+    const int test_times = 10;
+    int algo = CUBLAS_GEMM_DEFAULT; // 默认算法
     const std::vector<std::tuple<int, int, int>> test_cases = {
         {128, 1024, 4096},
         {128, 2048, 4096},
         {256, 1024, 4096},
-        {256, 2048, 4096}
+        {256, 2048, 4096},
+        {1024, 1024, 1024},
+        {2048, 2048, 2048},
+        {4096, 8192, 1024},
     };
 
-    const int warmup_times = 10;
-    const int test_times = 100;
+    // 初始化cuBLAS
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    int start_algo = CUBLAS_GEMM_DEFAULT;
+    int end_algo = CUBLAS_GEMM_ALGO23;
+    int start_algo_t_op = CUBLAS_GEMM_DEFAULT_TENSOR_OP;
+    int end_algo_t_op = CUBLAS_GEMM_ALGO15_TENSOR_OP;
     
     // 可以选择性地设置 Tensor Core 数学模式以利用 FP16 Tensor Cores (需要 SM 7.0+)
     if (deviceProp.major >= 7) {
@@ -192,42 +201,77 @@ int main(int argc, char *argv[]) {
     printf("\nBenchmarking GEMM...\n");
 
     // 测试 float
-    printf("\n--- Testing float (FP32) ---\n");
-
-    for (const auto& [M, N, K] : test_cases) {
-        bench_gemm<float, float>(handle, M, N, K, warmup_times, test_times);
+    if (run_mask & 0x1){
+        printf("\n--- Testing float (FP32) ---\n");
+        for (const auto& [M, N, K] : test_cases) {
+            bench_gemm<float, float>(handle, M, N, K, warmup_times, test_times, algo);
+        }
+    }else{
+        printf("\n--- Skipping float (FP32) benchmark ---\n");
     }
 
     // 测试 double
-    // 检查设备是否支持 double
-    if (deviceProp.major >= 1) { // Double precision generally available on compute capability 1.x and higher
-        printf("\n--- Testing double (FP64) ---\n");
-         for (const auto& [M, N, K] : test_cases) {
-            bench_gemm<double, double>(handle, M, N, K, warmup_times, test_times);
-         }
-    } else {
-        printf("\n--- Skipping double (FP64) benchmark: Device does not support double precision ---\n");
+    if (run_mask & 0x2){
+        const std::vector<std::tuple<int, int, int>> test_cases = {
+            {128, 1024, 4096},
+            {1024, 1024, 1024},
+        };
+        // 检查设备是否支持 double
+        if (deviceProp.major >= 1) { // Double precision generally available on compute capability 1.x and higher
+            printf("\n--- Testing double (FP64) ---\n");
+            for (const auto& [M, N, K] : test_cases)
+                bench_gemm<double, double>(handle, M, N, K, warmup_times, test_times);
+        } else {
+            printf("\n--- Skipping double (FP64) benchmark: Device does not support double precision ---\n");
+        }
+    }
+    else{
+        printf("\n--- Skipping double (FP64) benchmark ---\n");
     }
 
     // 测试 __half (FP16)
-    // 检查设备是否支持 FP16 计算（通常需要 SM 5.3+ for storage, 6.0+ for operations, 7.0+ for Tensor Cores）
-    if (deviceProp.major > 5 || (deviceProp.major == 5 && deviceProp.minor >= 3)) {
-        printf("\n--- Testing __half (FP16) ---\n");
-        for (const auto& [M, N, K] : test_cases) {
-            bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times);
+    if(run_mask & 0x4){
+        const std::vector<std::tuple<int, int, int>> test_cases = {
+            {128, 1024, 4096},
+            {1024, 1024, 1024},
+        };
+        // 检查设备是否支持 FP16 计算（通常需要 SM 5.3+ for storage, 6.0+ for operations, 7.0+ for Tensor Cores）
+        if (deviceProp.major > 5 || (deviceProp.major == 5 && deviceProp.minor >= 3)) {
+            printf("\n--- Testing __half (FP16) ---\n");
+            for (const auto& [M, N, K] : test_cases){
+                for (int algo = start_algo; algo <= end_algo; ++algo)
+                    bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times, algo);
+                for (int algo = start_algo_t_op; algo <= end_algo_t_op; ++algo)
+                    bench_gemm<__half, __half>(handle, M, N, K, warmup_times, test_times, algo);
+            }
+        } else {
+            printf("\n--- Skipping __half (FP16) benchmark: Device does not support FP16 compute ---\n");
         }
-    } else {
-         printf("\n--- Skipping __half (FP16) benchmark: Device does not support FP16 compute ---\n");
+    }
+    else{
+        printf("\n--- Skipping __half (FP16) benchmark ---\n");
     }
 
     // 测试 int8_t
-    if (deviceProp.major >= 6) { // SM 6.0+ for INT8
-        printf("\n--- Testing int8_t (INT8) ---\n");
-        for (const auto& [M, N, K] : test_cases) {
-            bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times);
+    if(run_mask & 0x8){
+        const std::vector<std::tuple<int, int, int>> test_cases = {
+            {128, 1024, 4096},
+            {1024, 1024, 1024},
+        };
+        if (deviceProp.major >= 6) { // SM 6.0+ for INT8
+            printf("\n--- Testing int8_t (INT8) ---\n");
+            for (const auto& [M, N, K] : test_cases){
+                for (int algo = start_algo; algo <= end_algo; ++algo)
+                    bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times, algo);
+                for (int algo = start_algo_t_op; algo <= end_algo_t_op; ++algo)
+                    bench_gemm<int8_t, int32_t>(handle, M, N, K, warmup_times, test_times, algo);
+            }
+        } else {
+             printf("\n--- Skipping int8_t (INT8) benchmark: Device does not support INT8 compute ---\n");
         }
-    } else {
-         printf("\n--- Skipping int8_t (INT8) benchmark: Device does not support INT8 compute ---\n");
+    }
+    else{
+        printf("\n--- Skipping int8_t (INT8) benchmark ---\n");
     }
 
     cublasDestroy(handle);
